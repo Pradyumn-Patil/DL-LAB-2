@@ -3,6 +3,9 @@ import torch
 import torch.optim as optim
 from agent.replay_buffer import ReplayBuffer
 
+# Add device selection
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def soft_update(target, source, tau):
     for target_param, param in zip(target.parameters(), source.parameters()):
@@ -38,12 +41,12 @@ class DQNAgent:
            lr: learning rate of the optimizer
         """
         # setup networks
-        self.Q = Q.cuda()
-        self.Q_target = Q_target.cuda()
+        self.Q = Q.to(device)
+        self.Q_target = Q_target.to(device)
         self.Q_target.load_state_dict(self.Q.state_dict())
 
         # define replay buffer
-        self.replay_buffer = ReplayBuffer(history_length)
+        self.replay_buffer = ReplayBuffer()  # Remove history_length parameter since it's not used
 
         # parameters
         self.batch_size = batch_size
@@ -57,40 +60,52 @@ class DQNAgent:
         self.num_actions = num_actions
 
     def train(self, state, action, next_state, reward, terminal):
-        """
-        This method stores a transition to the replay buffer and updates the Q networks.
-        """
+        # Store transition in replay buffer
+        self.replay_buffer.add_transition(state, action, next_state, reward, terminal)
 
-        # TODO:
-        # 1. add current transition to replay buffer
-        # 2. sample next batch and perform batch update:
-        #       2.1 compute td targets and loss
-        #              td_target =  reward + discount * max_a Q_target(next_state_batch, a)
-        #       2.2 update the Q network
-        #       2.3 call soft update for target network
-        #           soft_update(self.Q_target, self.Q, self.tau)
+        # Only train if enough samples in replay buffer
+        if self.replay_buffer.size() < self.batch_size:
+            return
+
+        # Sample batch from replay buffer
+        batch_states, batch_actions, batch_next_states, batch_rewards, batch_terminals = self.replay_buffer.next_batch(
+            self.batch_size
+        )
+
+        # Convert numpy arrays to torch tensors
+        states = torch.FloatTensor(batch_states).to(device)
+        actions = torch.LongTensor(batch_actions).to(device)
+        next_states = torch.FloatTensor(batch_next_states).to(device)
+        rewards = torch.FloatTensor(batch_rewards).to(device)
+        terminals = torch.FloatTensor(batch_terminals).to(device)
+
+        # Compute TD targets
+        next_q_values = self.Q_target(next_states)
+        max_next_q_values = torch.max(next_q_values, dim=1)[0]
+        td_targets = rewards + (1 - terminals) * self.gamma * max_next_q_values
+
+        # Get Q values for the actions taken
+        q_values = self.Q(states)
+        q_values = q_values.gather(1, actions.unsqueeze(1)).squeeze()
+
+        # Compute loss and update Q network
+        loss = self.loss_function(q_values, td_targets.detach())
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        # Update target network
+        soft_update(self.Q_target, self.Q, self.tau)
 
     def act(self, state, deterministic):
-        """
-        This method creates an epsilon-greedy policy based on the Q-function approximator and epsilon (probability to select a random action)
-        Args:
-            state: current state input
-            deterministic:  if True, the agent should execute the argmax action (False in training, True in evaluation)
-        Returns:
-            action id
-        """
-        r = np.random.uniform()
-        if deterministic or r > self.epsilon:
-            pass
-            # TODO: take greedy action (argmax)
-            # action_id = ...
+        state = torch.FloatTensor(state).unsqueeze(0).to(device)
+
+        if deterministic or np.random.rand() > self.epsilon:
+            with torch.no_grad():
+                q_values = self.Q(state)
+                action_id = q_values.max(1)[1].item()
         else:
-            pass
-            # TODO: sample random action
-            # Hint for the exploration in CarRacing: sampling the action from a uniform distribution will probably not work.
-            # You can sample the agents actions with different probabilities (need to sum up to 1) so that the agent will prefer to accelerate or going straight.
-            # To see how the agent explores, turn the rendering in the training on and look what the agent is doing.
-            # action_id = ...
+            action_id = np.random.randint(self.num_actions)
 
         return action_id
 
@@ -100,3 +115,9 @@ class DQNAgent:
     def load(self, file_name):
         self.Q.load_state_dict(torch.load(file_name))
         self.Q_target.load_state_dict(torch.load(file_name))
+
+    def get_q_values(self, state):
+        """Returns Q-values for a given state"""
+        with torch.no_grad():
+            state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+            return self.Q(state)

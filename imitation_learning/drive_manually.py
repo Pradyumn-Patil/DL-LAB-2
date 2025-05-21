@@ -18,7 +18,7 @@ def key_press(k, mod):
     if k == key.RIGHT:
         a[0] = +1.0
     if k == key.UP:
-        a[1] = +1.0
+        a[1] = +0.5
     if k == key.DOWN:
         a[2] = +0.2
 
@@ -122,6 +122,7 @@ if __name__ == "__main__":
                 save_results(episode_rewards, "./results")
 
             env.render()
+            time.sleep(0.015)
             if done:
                 break
 
