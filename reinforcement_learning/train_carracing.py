@@ -233,6 +233,7 @@ if __name__ == "__main__":
         epsilon=0.3,  # Increased epsilon for better exploration
         tau=0.01,
         lr=1e-4,
+        #next time try with 1e-5
         history_length=history_length
     )
 
